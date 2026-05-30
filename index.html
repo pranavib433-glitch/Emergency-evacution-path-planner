@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emergency Evacuation Path Planner</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #06090f;
+    --surface:  #0d1520;
+    --border:   #1a2d45;
+    --accent:   #00d4ff;
+    --danger:   #ff3b3b;
+    --safe:     #00ff9d;
+    --warn:     #ffb800;
+    --text:     #cde6ff;
+    --muted:    #4a6a8a;
+    --glow:     0 0 18px rgba(0,212,255,.35);
+    --glow-r:   0 0 18px rgba(255,59,59,.45);
+    --glow-g:   0 0 18px rgba(0,255,157,.35);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Exo 2', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── scanline overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 999; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,.08) 2px,
+      rgba(0,0,0,.08) 4px
+    );
+  }
+
+  /* ── animated grid bg ── */
+  body::after {
+    content: '';
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(0,212,255,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    animation: gridScroll 25s linear infinite;
+  }
+  @keyframes gridScroll {
+    from { background-position: 0 0; }
+    to   { background-position: 40px 40px; }
+  }
+
+  /* ── header ── */
+  header {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(13,21,32,.92);
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    display: flex; align-items: center; gap: 14px;
+  }
+  .logo-icon {
+    width: 42px; height: 42px;
+    border: 2px solid var(--danger);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    box-shadow: var(--glow-r);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow: var(--glow-r); }
+    50%      { box-shadow: 0 0 32px rgba(255,59,59,.7); }
+  }
+  .logo-text h1 {
+    font-size: 16px; font-weight: 800; letter-spacing: .08em;
+    color: #fff; text-transform: uppercase;
+  }
+  .logo-text p {
+    font-size: 10px; color: var(--muted); letter-spacing: .12em;
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  .status-bar {
+    display: flex; gap: 20px; align-items: center;
+    font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--safe);
+    box-shadow: 0 0 8px var(--safe);
+    animation: blink 1.4s ease-in-out infinite;
+  }
+  @keyframes blink {
+    0%,100% { opacity: 1; } 50% { opacity: .3; }
+  }
+  .status-label { color: var(--muted); }
+  .clock { color: var(--accent); }
+
+  /* ── layout ── */
+  main {
+    position: relative; z-index: 5;
+    display: grid;
+    grid-template-columns: 340px 1fr 280px;
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    height: calc(100vh - 73px);
+  }
+
+  /* ── panels ── */
+  .panel {
+    border-right: 1px solid var(--border);
+    padding: 22px 20px;
+    overflow-y: auto;
+    background: rgba(13,21,32,.7);
+  }
+  .panel:last-child { border-right: none; border-left: 1px solid var(--border); }
+  .panel-title {
+    font-size: 10px; font-weight: 600; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: 18px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel-title::before {
+    content: ''; width: 3px; height: 14px;
+    background: var(--accent); border-radius: 2px;
+    box-shadow: var(--glow);
+  }
+
+  /* ── form controls ── */
+  label {
+    display: block; font-size: 10px; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 7px; margin-top: 16px;
+  }
+  label:first-of-type { margin-top: 0; }
+
+  select, .btn {
+    width: 100%;
+    background: rgba(0,0,0,.4);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    padding: 10px 14px;
+    transition: border-color .2s, box-shadow .2s;
+    appearance: none;
+  }
+  select:focus, select:hover {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: var(--glow);
+  }
+
+  .btn {
+    cursor: pointer; font-family: 'Exo 2', sans-serif;
+    font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    text-align: center; font-size: 12px;
+    margin-top: 22px;
+    background: linear-gradient(135deg, rgba(0,212,255,.15), rgba(0,212,255,.05));
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: var(--glow);
+    position: relative; overflow: hidden;
+  }
+  .btn:hover {
+    background: linear-gradient(135deg, rgba(0,212,255,.28), rgba(0,212,255,.1));
+    transform: translateY(-1px);
+  }
+  .btn:active { transform: translateY(0); }
+  .btn::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg,transparent,rgba(255,255,255,.07),transparent);
+    transform: translateX(-100%);
+    transition: transform .5s;
+  }
+  .btn:hover::after { transform: translateX(100%); }
+
+  .btn-danger {
+    border-color: var(--danger); color: var(--danger);
+    box-shadow: var(--glow-r);
+    background: linear-gradient(135deg, rgba(255,59,59,.12), rgba(255,59,59,.04));
+  }
+  .btn-danger:hover {
+    background: linear-gradient(135deg, rgba(255,59,59,.25), rgba(255,59,59,.1));
+  }
+
+  .btn-safe {
+    border-color: var(--safe); color: var(--safe);
+    box-shadow: var(--glow-g);
+    background: linear-gradient(135deg, rgba(0,255,157,.1), rgba(0,255,157,.03));
+  }
+
+  /* ── map canvas ── */
+  #mapArea {
+    background: rgba(6,9,15,.85);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .map-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'Share Tech Mono', monospace; font-size: 11px;
+    background: rgba(0,0,0,.3);
+  }
+  .map-header span { color: var(--muted); }
+  .map-header strong { color: var(--accent); }
+  #canvas { flex: 1; display: block; cursor: crosshair; }
+
+  /* ── result card ── */
+  .result-card {
+    background: rgba(0,212,255,.06);
+    border: 1px solid rgba(0,212,255,.2);
+    border-radius: 8px;
+    padding: 14px;
+    margin-top: 14px;
+    animation: fadeIn .4s ease;
+  }
+  .result-card.danger {
+    background: rgba(255,59,59,.06);
+    border-color: rgba(255,59,59,.25);
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .result-label {
+    font-size: 9px; font-weight: 600; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  }
+  .result-value {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 20px; font-weight: 700; color: var(--accent);
+  }
+  .result-value.big { font-size: 28px; }
+  .result-row {
+    display: flex; justify-content: space-between; margin-top: 10px;
+  }
+
+  /* ── path steps ── */
+  .path-step {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    font-size: 12px; color: var(--text);
+    animation: stepIn .3s ease both;
+  }
+  .path-step:last-child { border-bottom: none; }
+  @keyframes stepIn {
+    from { opacity: 0; transform: translateX(-12px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  .step-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(0,212,255,.15);
+    border: 1px solid var(--accent);
+    color: var(--accent); font-size: 10px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .step-num.exit-step {
+    background: rgba(0,255,157,.15);
+    border-color: var(--safe); color: var(--safe);
+  }
+  .step-arrow {
+    font-size: 10px; color: var(--muted); margin-left: auto;
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  /* ── hazard list ── */
+  .hazard-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 10px; margin-bottom: 6px;
+    background: rgba(255,59,59,.08);
+    border: 1px solid rgba(255,59,59,.2);
+    border-radius: 6px; font-size: 12px;
+  }
+  .hazard-item .remove-btn {
+    background: none; border: none; color: var(--safe);
+    cursor: pointer; font-size: 14px; padding: 0 4px;
+    transition: color .2s;
+  }
+  .hazard-item .remove-btn:hover { color: #fff; }
+  .hazard-icon { color: var(--danger); margin-right: 6px; }
+
+  /* ── algo compare ── */
+  .algo-row {
+    display: grid; grid-template-columns: 1fr auto auto;
+    gap: 8px; align-items: center;
+    padding: 7px 10px; margin-bottom: 4px;
+    background: rgba(0,0,0,.3); border-radius: 5px;
+    font-size: 11px; font-family: 'Share Tech Mono', monospace;
+    animation: fadeIn .4s ease both;
+  }
+  .algo-row .algo-name { color: var(--text); }
+  .algo-row .algo-cost { color: var(--accent); }
+  .algo-row .algo-nodes { color: var(--muted); font-size: 10px; }
+  .algo-row.best { border: 1px solid rgba(0,255,157,.3); }
+  .algo-row.best .algo-name { color: var(--safe); }
+
+  /* ── spinner ── */
+  .spinner {
+    width: 28px; height: 28px; margin: 20px auto;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── empty state ── */
+  .empty-state {
+    text-align: center; padding: 30px 0;
+    color: var(--muted); font-size: 12px; line-height: 1.7;
+  }
+  .empty-state .icon { font-size: 32px; margin-bottom: 10px; display: block; }
+
+  /* ── alert banner ── */
+  .alert {
+    background: rgba(255,184,0,.12);
+    border: 1px solid rgba(255,184,0,.3);
+    border-radius: 6px; padding: 10px 14px;
+    font-size: 11px; color: var(--warn);
+    font-family: 'Share Tech Mono', monospace;
+    margin-top: 12px; line-height: 1.5;
+  }
+
+  /* ── legend ── */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  .legend-item {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10px; font-family: 'Share Tech Mono', monospace;
+    color: var(--muted);
+  }
+  .legend-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  }
+
+  /* ── scrollbar ── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🚨</div>
+    <div class="logo-text">
+      <h1>Emergency Evacuation Path Planner</h1>
+      <p>KL UNIVERSITY  ·  S.Vedhanth · T.Ananya · B.Pranavi</p>
+    </div>
+  </div>
+  <div class="status-bar">
+    <div class="status-dot"></div>
+    <span class="status-label">SYSTEM ACTIVE</span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<main>
+  <!-- ── LEFT PANEL: Controls ── -->
+  <div class="panel">
+    <div class="panel-title">⚙ Mission Control</div>
+
+    <label>Starting Room</label>
+    <select id="startRoom">
+      <option value="">Loading rooms…</option>
+    </select>
+
+    <label>Algorithm</label>
+    <select id="algorithm">
+      <option value="astar">A* (Optimal + Heuristic)</option>
+      <option value="bfs">BFS (Breadth-First)</option>
+      <option value="ucs">UCS (Uniform Cost)</option>
+    </select>
+
+    <button class="btn" onclick="findPath()">⚡ Find Evacuation Path</button>
+    <button class="btn btn-safe" onclick="compareAll()" style="margin-top:10px;">📊 Compare All Algorithms</button>
+
+    <div style="margin-top: 28px;">
+      <div class="panel-title">🔥 Hazard Management</div>
+      <label>Mark Room as Hazardous</label>
+      <select id="hazardRoom">
+        <option value="">Select a room…</option>
+      </select>
+      <button class="btn btn-danger" onclick="addHazard()" style="margin-top:10px;">🔥 Mark as Hazardous</button>
+      <div id="hazardList" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#00d4ff;"></div>Room</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#00ff9d;"></div>Exit</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff3b3b;"></div>Hazard</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ffb800;"></div>Path</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6;"></div>Selected</div>
+    </div>
+  </div>
+
+  <!-- ── CENTER: Map Canvas ── -->
+  <div id="mapArea">
+    <div class="map-header">
+      <span>BUILDING MAP · Hospital Layout · 3 Floors</span>
+      <strong id="mapStatus">Ready — select room &amp; run search</strong>
+    </div>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <!-- ── RIGHT PANEL: Results ── -->
+  <div class="panel" id="rightPanel">
+    <div class="panel-title">📡 Result &amp; Analysis</div>
+    <div class="empty-state">
+      <span class="icon">🗺</span>
+      Run an evacuation search to see<br>the optimal path and stats here.
+    </div>
+  </div>
+</main>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// CONFIG
+// ─────────────────────────────────────────────────────────────────────────────
+const API = '';   // same origin as Flask; change to 'http://localhost:5000' if needed
+
+// Hospital node positions (normalised for the canvas)
+// These match build_sample_hospital() coordinates
+const NODE_POS = {
+  Entrance:    [0,   0],
+  Lobby:       [10,  0],
+  Corridor_A:  [20,  0],
+  Ward_1:      [30,  0],
+  Ward_2:      [40,  0],
+  ICU:         [20, -10],
+  Stairwell:   [10,  10],
+  Floor2_Hall: [10,  20],
+  Room_201:    [20,  20],
+  Room_202:    [30,  20],
+  Roof_Exit:   [10,  30],
+  Exit_East:   [50,  0],
+  Exit_North:  [10,  -5],
+};
+
+const EDGES = [
+  ['Entrance','Lobby'], ['Lobby','Corridor_A'], ['Corridor_A','Ward_1'],
+  ['Ward_1','Ward_2'], ['Ward_2','Exit_East'], ['Corridor_A','ICU'],
+  ['Lobby','Stairwell'], ['Lobby','Exit_North'], ['Stairwell','Floor2_Hall'],
+  ['Floor2_Hall','Room_201'], ['Room_201','Room_202'], ['Floor2_Hall','Roof_Exit'],
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+let rooms = [], exits = [], hazards = new Set(), currentPath = [];
+let selectedStart = null;
+let compareResults = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLOCK
+// ─────────────────────────────────────────────────────────────────────────────
+function updateClock() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('en-GB', {hour12: false});
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CANVAS SETUP
+// ─────────────────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+  const area = document.getElementById('mapArea');
+  const header = area.querySelector('.map-header');
+  canvas.width  = area.clientWidth;
+  canvas.height = area.clientHeight - header.clientHeight;
+  drawMap();
+}
+window.addEventListener('resize', resizeCanvas);
+
+// Map coordinate → canvas pixel
+function worldToCanvas(x, y) {
+  const xs = canvas.width,  ys = canvas.height;
+  // world range: x: 0–50, y: -10–30
+  const padX = 80, padY = 70;
+  const cx = padX + ((x - 0)  / 50) * (xs - 2*padX);
+  const cy = padY + ((y - (-10)) / 40) * (ys - 2*padY);
+  return [cx, cy];
+}
+
+function drawMap() {
+  if (!canvas.width) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const pathSet = new Set(currentPath);
+  const pathEdges = new Set();
+  for (let i = 0; i < currentPath.length - 1; i++) {
+    pathEdges.add(currentPath[i] + '|' + currentPath[i+1]);
+    pathEdges.add(currentPath[i+1] + '|' + currentPath[i]);
+  }
+
+  // ── Draw edges ────────────────────────────────────────────────────────────
+  for (const [u, v] of EDGES) {
+    const [ax, ay] = worldToCanvas(...NODE_POS[u]);
+    const [bx, by] = worldToCanvas(...NODE_POS[v]);
+    const onPath = pathEdges.has(u + '|' + v);
+
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+
+    if (onPath) {
+      ctx.strokeStyle = '#ffb800';
+      ctx.lineWidth = 4;
+      ctx.shadowColor = '#ffb800';
+      ctx.shadowBlur = 14;
+    } else {
+      ctx.strokeStyle = 'rgba(26,45,69,0.9)';
+      ctx.lineWidth = 2;
+      ctx.shadowBlur = 0;
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Edge weight label
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+    ctx.fillStyle = 'rgba(74,106,138,0.8)';
+    ctx.font = '9px "Share Tech Mono"';
+    ctx.textAlign = 'center';
+    ctx.fillText('', mx, my); // keep clean
+  }
+
+  // ── Draw path arrows ──────────────────────────────────────────────────────
+  if (currentPath.length > 1) {
+    for (let i = 0; i < currentPath.length - 1; i++) {
+      const [ax, ay] = worldToCanvas(...NODE_POS[currentPath[i]]);
+      const [bx, by] = worldToCanvas(...NODE_POS[currentPath[i+1]]);
+      drawArrow(ax, ay, bx, by);
+    }
+  }
+
+  // ── Draw nodes ────────────────────────────────────────────────────────────
+  for (const [name, pos] of Object.entries(NODE_POS)) {
+    const [cx, cy] = worldToCanvas(...pos);
+    const isExit    = exits.includes(name);
+    const isHazard  = hazards.has(name);
+    const onPath    = pathSet.has(name);
+    const isSelected = name === selectedStart;
+
+    let radius = isExit ? 18 : 13;
+    let fillColor, strokeColor, glowColor;
+
+    if (isHazard) {
+      fillColor = 'rgba(255,59,59,.25)'; strokeColor = '#ff3b3b'; glowColor = '#ff3b3b';
+    } else if (isExit) {
+      fillColor = 'rgba(0,255,157,.15)'; strokeColor = '#00ff9d'; glowColor = '#00ff9d';
+    } else if (onPath) {
+      fillColor = 'rgba(255,184,0,.2)'; strokeColor = '#ffb800'; glowColor = '#ffb800';
+    } else if (isSelected) {
+      fillColor = 'rgba(139,92,246,.25)'; strokeColor = '#8b5cf6'; glowColor = '#8b5cf6';
+    } else {
+      fillColor = 'rgba(0,212,255,.1)'; strokeColor = '#1a4060'; glowColor = '#00d4ff';
+    }
+
+    // Glow
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = onPath || isExit || isHazard || isSelected ? 16 : 0;
+
+    // Node circle
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = isExit || isHazard || onPath || isSelected ? 2 : 1;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Icon
+    let icon = isExit ? '🚪' : isHazard ? '🔥' : '🏥';
+    if (name === 'ICU') icon = '⚕️';
+    if (name === 'Stairwell') icon = '🪜';
+    if (name === 'Lobby') icon = '🏛';
+    if (name === 'Entrance') icon = '🚪';
+    if (name === 'Roof_Exit') icon = '🏠';
+    ctx.font = `${isExit ? 13 : 11}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(icon, cx, cy);
+
+    // Step number on path
+    if (onPath && !isExit) {
+      const stepIdx = currentPath.indexOf(name);
+      if (stepIdx >= 0) {
+        ctx.fillStyle = '#ffb800';
+        ctx.font = 'bold 9px "Share Tech Mono"';
+        ctx.textAlign = 'center';
+        ctx.fillText(stepIdx + 1, cx + radius - 3, cy - radius + 3);
+      }
+    }
+
+    // Label
+    const labelY = cy + radius + 12;
+    ctx.fillStyle = isHazard ? '#ff3b3b' : isExit ? '#00ff9d' : onPath ? '#ffb800' : '#4a6a8a';
+    ctx.font = `${isExit ? '600' : '400'} 10px "Exo 2"`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(name.replace('_', ' '), cx, labelY);
+  }
+}
+
+function drawArrow(x1, y1, x2, y2) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const len   = Math.hypot(x2 - x1, y2 - y1);
+  const tip   = 0.6; // fraction along edge
+  const tx    = x1 + Math.cos(angle) * len * tip;
+  const ty    = y1 + Math.sin(angle) * len * tip;
+  const aLen  = 10, aAngle = 0.45;
+
+  ctx.beginPath();
+  ctx.moveTo(tx - Math.cos(angle - aAngle) * aLen,
+             ty - Math.sin(angle - aAngle) * aLen);
+  ctx.lineTo(tx, ty);
+  ctx.lineTo(tx - Math.cos(angle + aAngle) * aLen,
+             ty - Math.sin(angle + aAngle) * aLen);
+  ctx.strokeStyle = '#ffb800';
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = '#ffb800';
+  ctx.shadowBlur = 8;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CANVAS CLICK → select room
+// ─────────────────────────────────────────────────────────────────────────────
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  for (const [name, pos] of Object.entries(NODE_POS)) {
+    const [cx, cy] = worldToCanvas(...pos);
+    if (Math.hypot(mx - cx, my - cy) < 22) {
+      document.getElementById('startRoom').value = name;
+      selectedStart = name;
+      drawMap();
+      break;
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API CALLS
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadRooms() {
+  try {
+    const r = await fetch(`${API}/api/rooms`);
+    const d = await r.json();
+    rooms = d.rooms; exits = d.exits;
+
+    const startSel = document.getElementById('startRoom');
+    const hazSel   = document.getElementById('hazardRoom');
+    startSel.innerHTML = rooms.map(r => `<option value="${r}">${r.replace(/_/g,' ')}</option>`).join('');
+    hazSel.innerHTML   = '<option value="">Select a room…</option>' +
+      rooms.map(r => `<option value="${r}">${r.replace(/_/g,' ')}</option>`).join('');
+
+    startSel.value = 'Room_202';
+    selectedStart = 'Room_202';
+    resizeCanvas();
+  } catch(e) {
+    showFallback();
+  }
+}
+
+function showFallback() {
+  // Populate from static NODE_POS when API not reachable
+  rooms = Object.keys(NODE_POS);
+  exits = ['Entrance','Exit_East','Exit_North','Roof_Exit'];
+  const startSel = document.getElementById('startRoom');
+  const hazSel   = document.getElementById('hazardRoom');
+  startSel.innerHTML = rooms.map(r => `<option value="${r}">${r.replace(/_/g,' ')}</option>`).join('');
+  hazSel.innerHTML   = '<option value="">Select a room…</option>' +
+    rooms.map(r => `<option value="${r}">${r.replace(/_/g,' ')}</option>`).join('');
+  startSel.value = 'Room_202';
+  selectedStart  = 'Room_202';
+
+  document.getElementById('rightPanel').innerHTML = `
+    <div class="panel-title">📡 Result & Analysis</div>
+    <div class="alert">⚠ Backend not reachable. Start the Flask server (python api.py) then refresh. The map is shown in preview mode.</div>`;
+  resizeCanvas();
+}
+
+async function findPath() {
+  const start = document.getElementById('startRoom').value;
+  const algo  = document.getElementById('algorithm').value;
+  if (!start) return;
+
+  selectedStart = start;
+  setMapStatus('Calculating path…');
+  showSpinner();
+
+  try {
+    const r = await fetch(`${API}/api/path?start=${encodeURIComponent(start)}&algo=${algo}`);
+    const d = await r.json();
+    currentPath = d.found ? d.path : [];
+    compareResults = null;
+    drawMap();
+    setMapStatus(d.found
+      ? `✓ Path found · ${d.path.length} steps · ${d.cost.toFixed(1)}s`
+      : '✗ No safe path found');
+    renderResult(d);
+  } catch(e) {
+    setMapStatus('⚠ API error');
+    document.getElementById('rightPanel').innerHTML = `
+      <div class="panel-title">📡 Result & Analysis</div>
+      <div class="alert">Cannot reach the Flask API. Make sure the server is running on port 5000.</div>`;
+  }
+}
+
+async function compareAll() {
+  const start = document.getElementById('startRoom').value;
+  if (!start) return;
+
+  selectedStart = start;
+  setMapStatus('Comparing algorithms…');
+  showSpinner();
+
+  const algos = ['astar','bfs','ucs'];
+  const results = {};
+
+  try {
+    await Promise.all(algos.map(async (algo) => {
+      const r = await fetch(`${API}/api/path?start=${encodeURIComponent(start)}&algo=${algo}`);
+      results[algo] = await r.json();
+    }));
+
+    // Show A* path by default
+    currentPath = results['astar']?.path || [];
+    compareResults = results;
+    drawMap();
+    setMapStatus(`Comparison complete · A* shown on map`);
+    renderComparison(results);
+  } catch(e) {
+    setMapStatus('⚠ API error');
+  }
+}
+
+async function addHazard() {
+  const node = document.getElementById('hazardRoom').value;
+  if (!node) return;
+
+  try {
+    await fetch(`${API}/api/hazard`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ node, hazardous: true })
+    });
+  } catch(e) { /* offline – still update locally */ }
+
+  hazards.add(node);
+  renderHazardList();
+  drawMap();
+}
+
+function removeHazard(node) {
+  fetch(`${API}/api/hazard`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ node, hazardous: false })
+  }).catch(() => {});
+
+  hazards.delete(node);
+  renderHazardList();
+  // Clear path if it passes through removed hazard
+  if (currentPath.includes(node)) { currentPath = []; }
+  drawMap();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDER HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+function setMapStatus(msg) {
+  document.getElementById('mapStatus').textContent = msg;
+}
+
+function showSpinner() {
+  document.getElementById('rightPanel').innerHTML = `
+    <div class="panel-title">📡 Result & Analysis</div>
+    <div class="spinner"></div>
+    <p style="text-align:center;font-size:11px;color:var(--muted);font-family:'Share Tech Mono'">Running search…</p>`;
+}
+
+function renderResult(d) {
+  const panel = document.getElementById('rightPanel');
+
+  if (!d.found) {
+    panel.innerHTML = `
+      <div class="panel-title">📡 Result & Analysis</div>
+      <div class="result-card danger">
+        <div class="result-label">Status</div>
+        <div class="result-value" style="color:var(--danger)">NO PATH</div>
+        <p style="font-size:11px;color:var(--muted);margin-top:8px">All routes blocked by hazards or no exit reachable.</p>
+      </div>`;
+    return;
+  }
+
+  const pathHTML = d.path.map((node, i) => {
+    const isLast = i === d.path.length - 1;
+    return `<div class="path-step" style="animation-delay:${i*60}ms">
+      <div class="step-num ${isLast ? 'exit-step' : ''}">${i+1}</div>
+      <span>${node.replace(/_/g,' ')}</span>
+      ${!isLast ? '<span class="step-arrow">→</span>' : '<span class="step-arrow" style="color:var(--safe)">🚪EXIT</span>'}
+    </div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="panel-title">📡 Result & Analysis</div>
+
+    <div class="result-card">
+      <div class="result-row">
+        <div>
+          <div class="result-label">Total Cost</div>
+          <div class="result-value big">${d.cost.toFixed(1)}<span style="font-size:14px;color:var(--muted)">s</span></div>
+        </div>
+        <div style="text-align:right">
+          <div class="result-label">Nodes Expanded</div>
+          <div class="result-value">${d.nodes}</div>
+        </div>
+      </div>
+      <div class="result-row" style="margin-top:12px">
+        <div>
+          <div class="result-label">Algorithm</div>
+          <div style="font-family:'Share Tech Mono';font-size:13px;color:var(--accent)">${d.algorithm.toUpperCase()}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="result-label">Steps</div>
+          <div style="font-family:'Share Tech Mono';font-size:13px;color:var(--accent)">${d.path.length}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <div class="panel-title" style="margin-bottom:10px;">🗺 Evacuation Route</div>
+      ${pathHTML}
+    </div>`;
+}
+
+function renderComparison(results) {
+  const panel = document.getElementById('rightPanel');
+
+  const algoNames = { astar: 'A* Search', bfs: 'BFS', ucs: 'UCS' };
+  let minCost = Infinity;
+  for (const r of Object.values(results)) {
+    if (r.found && r.cost < minCost) minCost = r.cost;
+  }
+
+  const rows = Object.entries(results).map(([key, d], i) => {
+    const isBest = d.found && Math.abs(d.cost - minCost) < 0.01;
+    return `<div class="algo-row ${isBest ? 'best' : ''}" style="animation-delay:${i*80}ms">
+      <span class="algo-name">${algoNames[key]} ${isBest ? '⭐' : ''}</span>
+      <span class="algo-cost">${d.found ? d.cost.toFixed(1)+'s' : '—'}</span>
+      <span class="algo-nodes">${d.nodes} nodes</span>
+    </div>`;
+  }).join('');
+
+  const best = results['astar'] || Object.values(results).find(r => r.found);
+
+  panel.innerHTML = `
+    <div class="panel-title">📊 Algorithm Comparison</div>
+    ${rows}
+
+    ${best?.found ? `
+    <div class="result-card" style="margin-top:18px">
+      <div class="result-label">Best Path (A*)</div>
+      <div style="font-family:'Share Tech Mono';font-size:11px;color:var(--text);margin-top:6px;line-height:1.8">
+        ${best.path.map(n => n.replace(/_/g,' ')).join(' → ')}
+      </div>
+    </div>` : ''}
+
+    <div class="alert" style="margin-top:14px">
+      A* uses f(n) = g(n) + h(n) where h is Euclidean distance to nearest exit ×0.8 (admissible &amp; consistent).
+    </div>`;
+}
+
+function renderHazardList() {
+  const el = document.getElementById('hazardList');
+  if (hazards.size === 0) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `<div style="font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Active Hazards</div>` +
+    [...hazards].map(h => `
+      <div class="hazard-item">
+        <span><span class="hazard-icon">🔥</span>${h.replace(/_/g,' ')}</span>
+        <button class="remove-btn" onclick="removeHazard('${h}')" title="Clear hazard">✓</button>
+      </div>`).join('');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────────────────
+loadRooms();
+</script>
+</body>
+</html>
