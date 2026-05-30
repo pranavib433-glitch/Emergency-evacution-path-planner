@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file
 from evacuation_planner import (
     build_sample_hospital,
     EvacProblem,
@@ -22,7 +22,7 @@ def test():
 # Home page
 @app.route("/")
 def index():
-    return send_from_directory("static", "index.html")
+    return send_file("index.html")
 
 # API: get shortest path
 @app.route("/api/path", methods=["GET"])
